@@ -1,7 +1,7 @@
 # Bot konfiguratsiyasi
 
 # Bot Token
-BOT_TOKEN = "8353739338:AAG9d_9DvVJerPt-gWgGSnoyL9WUZlU66LU"
+BOT_TOKEN = "8258174777:AAGkLwiKvDhgIcCiP8O8UhmIhay1kuiElmg"
 
 # Admin ID
 ADMIN_ID = 5425876649
