@@ -16,7 +16,13 @@ DEFAULT_START_MESSAGE = (
 class DatabaseManager:
     def __init__(self, db_path: str):
         self.db_path = db_path
+        self._ensure_directory()
         self.init_database()
+
+    def _ensure_directory(self):
+        directory = os.path.dirname(os.path.abspath(self.db_path))
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
 
     def get_db_path(self) -> str:
         """Database faylining to'liq yo'lini qaytarish"""
