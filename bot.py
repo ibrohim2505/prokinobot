@@ -947,6 +947,89 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 return
         
+        # Maxfiy kanal (invite) qo'shish: 1-bosqich, invite havola kutish
+        if context.user_data.get('awaiting_private_invite'):
+            invite_link = message_text.strip() if message_text else ""
+            invite_patterns = ["t.me/", "telegram.me/", "joinchat", "t.me/+", "t.me/+"]
+            if invite_link and any(p in invite_link for p in invite_patterns):
+                context.user_data['private_invite_link'] = invite_link
+                context.user_data['awaiting_private_invite'] = False
+                context.user_data['awaiting_private_details'] = True
+                await update.message.reply_text(
+                    "✅ Invite havola qabul qilindi.\n"
+                    "Endi maxfiy kanaldan biror postni forward qiling yoki kanal ID sini yuboring (masalan: -1001234567890)."
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ To'g'ri invite havola yuboring.\n"
+                    "Misol: https://t.me/+abc123 yoki https://t.me/joinchat/XXXX"
+                )
+            return
+
+        # Maxfiy kanal (invite) qo'shish: 2-bosqich, forward yoki ID kutish
+        if context.user_data.get('awaiting_private_details'):
+            if not channel_permission:
+                context.user_data['awaiting_private_details'] = False
+                context.user_data['private_invite_link'] = None
+                await update.message.reply_text("❌ Majburiy obuna kanallarini boshqarish huquqi yo'q!")
+                return
+
+            invite_link = context.user_data.get('private_invite_link')
+            if not invite_link:
+                await update.message.reply_text("❌ Avval invite havolasini yuboring.")
+                context.user_data['awaiting_private_invite'] = True
+                context.user_data['awaiting_private_details'] = False
+                return
+
+            # Forward qilingan post orqali kanal ma'lumoti
+            if update.message.forward_from_chat:
+                chat = update.message.forward_from_chat
+                channel_name = chat.title
+                channel_username = chat.username
+                if db.add_subscription_channel(invite_link, channel_name, channel_username):
+                    await update.message.reply_text(
+                        "✅ Maxfiy kanal qo'shildi!\n"
+                        "⚠️ Obuna holatini avtomatik tekshirib bo'lmaydi; foydalanuvchiga havola ko'rsatiladi."
+                    )
+                else:
+                    await update.message.reply_text("❌ Kanalni qo'shishda xatolik yoki allaqachon qo'shilgan!")
+
+                context.user_data['awaiting_private_details'] = False
+                context.user_data['private_invite_link'] = None
+                return
+
+            # Kanal ID yoki username matn ko'rinishida
+            if message_text:
+                channel_id_input = message_text.strip()
+                try:
+                    chat = await context.bot.get_chat(channel_id_input)
+                    bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+                    if bot_member.status not in ['administrator', 'creator']:
+                        await update.message.reply_text(
+                            "❌ Bot bu kanalda admin emas! Botni admin qiling va qayta urinib ko'ring."
+                        )
+                        return
+
+                    if db.add_subscription_channel(invite_link, chat.title, chat.username):
+                        await update.message.reply_text(
+                            "✅ Maxfiy kanal qo'shildi!\n"
+                            "⚠️ Obuna holatini avtomatik tekshirib bo'lmaydi; foydalanuvchiga havola ko'rsatiladi."
+                        )
+                    else:
+                        await update.message.reply_text("❌ Kanalni qo'shishda xatolik yoki allaqachon qo'shilgan!")
+                except Exception as e:
+                    await update.message.reply_text(
+                        f"❌ Xatolik yuz berdi!\n\nSabab: {str(e)}\n"
+                        "Kanal postini forward qiling yoki to'g'ri kanal ID yuboring."
+                    )
+
+                context.user_data['awaiting_private_details'] = False
+                context.user_data['private_invite_link'] = None
+                return
+
+            await update.message.reply_text("❌ Kanal postini forward qiling yoki kanal ID yuboring.")
+            return
+
         # Kanal qo'shish jarayonini tekshirish
         if context.user_data.get('awaiting_channel'):
             if not channel_permission:
@@ -1006,6 +1089,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         context.user_data['awaiting_channel'] = False
                     else:
                         await update.message.reply_text("❌ Profilni qo'shishda xatolik yuz berdi!")
+                    return
+
+                # Private/invite havola (t.me/..., telegram.me/..., joinchat, t.me/+...)
+                invite_patterns = ["t.me/", "telegram.me/", "joinchat", "t.me/+", "t.me/+"]
+                if any(p in channel_id for p in invite_patterns):
+                    if db.add_subscription_channel(channel_id, None, None):
+                        await update.message.reply_text(
+                            "✅ Invite havola majburiy obunaga qo'shildi.\n"
+                            "⚠️ Obuna holatini avtomatik tekshirib bo'lmaydi; foydalanuvchiga havola ko'rsatiladi.")
+                        context.user_data['awaiting_channel'] = False
+                    else:
+                        await update.message.reply_text("❌ Havolani qo'shishda xatolik yoki allaqachon qo'shilgan!")
                     return
                 
                 try:

@@ -503,6 +503,19 @@ class DatabaseManager:
         except Exception as e:
             print(f"Kanallarni olishda xatolik: {e}")
             return []
+
+    def get_subscription_channels_with_ids(self) -> list:
+        """Majburiy obuna kanallarini (row id bilan) olish"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, channel_id, channel_name, channel_username FROM subscription_channels")
+            results = cursor.fetchall()
+            conn.close()
+            return results
+        except Exception as e:
+            print(f"Kanallarni olishda xatolik (id bilan): {e}")
+            return []
     
     def delete_subscription_channel(self, channel_id: str) -> bool:
         """Majburiy obuna kanalini o'chirish"""
@@ -515,6 +528,19 @@ class DatabaseManager:
             return True
         except Exception as e:
             print(f"Kanalni o'chirishda xatolik: {e}")
+            return False
+
+    def delete_subscription_channel_by_id(self, row_id: int) -> bool:
+        """Majburiy obuna kanalini row id orqali o'chirish"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM subscription_channels WHERE id = ?", (row_id,))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Kanalni o'chirishda xatolik (id): {e}")
             return False
     
     def get_subscription_message(self) -> str:

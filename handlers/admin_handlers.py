@@ -429,19 +429,44 @@ class AdminHandlers:
         elif data == "channel_add":
             # Kanal qo'shish holatini saqlash
             context.user_data['awaiting_channel'] = True
+            context.user_data['awaiting_private_invite'] = False
+            context.user_data['awaiting_private_details'] = False
+            context.user_data['private_invite_link'] = None
             
             text = "📡 <b>Yangi kanal qo'shish</b>\n\n"
-            text += "Kanal havolasini yuboring yoki kanal postini forward qiling.\n\n"
-            text += "Misol: @channelname yoki -1001234567890"
+            text += "Kanal havolasini yuboring yoki kanal postini forward qiling.\n"
+            text += "Instagram profil havolasi ham jo'natishingiz mumkin — Instagram bo'yicha majburiy obuna talab qilinmaydi, faqat ko'rsatib beriladi.\n\n"
+            text += "Misol: @channelname yoki -1001234567890 yoki https://instagram.com/profil"
             
-            keyboard = [[InlineKeyboardButton("❌ Bekor qilish", callback_data="channel_cancel")]]
+            keyboard = [
+                [InlineKeyboardButton("🔒 Maxfiy kanal qo'shish", callback_data="channel_add_private")],
+                [InlineKeyboardButton("❌ Bekor qilish", callback_data="channel_cancel")]
+            ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await query.answer("Kanal havolasini yoki postini yuboring", show_alert=False)
             await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
         
+        elif data == "channel_add_private":
+            # Maxfiy kanalni alohida qo'shish jarayoni
+            context.user_data['awaiting_channel'] = False
+            context.user_data['awaiting_private_invite'] = True
+            context.user_data['awaiting_private_details'] = False
+            context.user_data['private_invite_link'] = None
+
+            text = (
+                "🔒 <b>Maxfiy kanal qo'shish</b>\n\n"
+                "Maxfiy kanal invite havolasini yuboring (t.me/..., telegram.me/..., joinchat yoki t.me/+...).\n"
+                "Havolani olganimizdan keyin sizdan kanaldan postni forward qilish yoki kanal ID sini yuborishni so'raymiz.\n\n"
+                "Masalan: https://t.me/+abc123 yoki https://t.me/joinchat/XXXX"
+            )
+
+            keyboard = [[InlineKeyboardButton("❌ Bekor qilish", callback_data="channel_cancel")]]
+            await query.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.answer("Invite havolasini yuboring", show_alert=False)
+
         elif data == "channel_delete":
-            channels = self.db.get_subscription_channels()
+            channels = self.db.get_subscription_channels_with_ids()
             
             if len(channels) == 0:
                 await query.answer("O'chirish uchun kanallar yo'q", show_alert=True)
@@ -450,9 +475,9 @@ class AdminHandlers:
                 text += "O'chirish uchun kanalni tanlang:"
                 
                 keyboard = []
-                for channel_id, channel_name, channel_username in channels:
+                for row_id, channel_id, channel_name, channel_username in channels:
                     name = channel_name or channel_username or channel_id
-                    keyboard.append([InlineKeyboardButton(f"🗑 {name}", callback_data=f"channel_delete_{channel_id}")])
+                    keyboard.append([InlineKeyboardButton(f"🗑 {name}", callback_data=f"channel_deleteid_{row_id}")])
                 
                 keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data="channel_back")])
                 reply_markup = InlineKeyboardMarkup(keyboard)
@@ -460,15 +485,19 @@ class AdminHandlers:
                 await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
                 await query.answer()
         
-        elif data.startswith("channel_delete_"):
-            # Kanalni o'chirish
-            channel_id = data.replace("channel_delete_", "")
+        elif data.startswith("channel_deleteid_"):
+            # Kanalni o'chirish (row id orqali, uzun callback_data muammosiz)
+            try:
+                row_id = int(data.replace("channel_deleteid_", ""))
+            except ValueError:
+                await query.answer("❌ Noto'g'ri ma'lumot", show_alert=True)
+                return
             
-            if self.db.delete_subscription_channel(channel_id):
+            if self.db.delete_subscription_channel_by_id(row_id):
                 await query.answer("Kanal muvaffaqiyatli o'chirildi ✅", show_alert=True)
                 
                 # Kanal o'chirish sahifasiga qaytish
-                channels = self.db.get_subscription_channels()
+                channels = self.db.get_subscription_channels_with_ids()
                 
                 if len(channels) == 0:
                     # Agar kanallar qolmasa, bosh menyuga qaytish
@@ -478,9 +507,9 @@ class AdminHandlers:
                     text += "O'chirish uchun kanalni tanlang:"
                     
                     keyboard = []
-                    for ch_id, ch_name, ch_username in channels:
+                    for row_id, ch_id, ch_name, ch_username in channels:
                         name = ch_name or ch_username or ch_id
-                        keyboard.append([InlineKeyboardButton(f"🗑 {name}", callback_data=f"channel_delete_{ch_id}")])
+                        keyboard.append([InlineKeyboardButton(f"🗑 {name}", callback_data=f"channel_deleteid_{row_id}")])
                     
                     keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data="channel_back")])
                     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -531,6 +560,9 @@ class AdminHandlers:
             context.user_data['awaiting_channel'] = False
             context.user_data['awaiting_sub_message'] = False
             context.user_data['awaiting_base_channel'] = False
+            context.user_data['awaiting_private_invite'] = False
+            context.user_data['awaiting_private_details'] = False
+            context.user_data['private_invite_link'] = None
             
             await query.answer("Bekor qilindi", show_alert=True)
             await self.show_channel_management_menu(query)
