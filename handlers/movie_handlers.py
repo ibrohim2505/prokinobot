@@ -30,6 +30,10 @@ class MovieHandlers:
 
         unsubscribed = []
         for channel_id, channel_name, channel_username in channels:
+            # Instagram yoki boshqa tashqi havolalarda majburiy obuna tekshirilmaydi
+            if isinstance(channel_id, str) and "instagram.com" in channel_id.lower():
+                continue
+
             chat_id = channel_id
             if isinstance(chat_id, str) and chat_id.lstrip('-').isdigit():
                 try:
@@ -53,6 +57,14 @@ class MovieHandlers:
             return True
 
         text_lines = [self.db.get_subscription_message().strip()]
+
+        # Instagram kabi tashqi havolalarni informatsion tarzda ko'rsatish
+        all_channels = self.db.get_subscription_channels()
+        external_links = [cid for cid, _, _ in all_channels if isinstance(cid, str) and "instagram.com" in cid.lower()]
+        if external_links:
+            text_lines.append("\n📎 Instagram profil(lar)i (tekshirilmaydi):")
+            for link in external_links:
+                text_lines.append(f"• {link}")
 
         buttons = []
         for _, channel_name, channel_username in unsubscribed:

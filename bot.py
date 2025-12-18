@@ -996,6 +996,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Matn sifatida kanal ID yoki username
             elif message_text:
                 channel_id = message_text.strip()
+
+                # Instagram havolasi bo'lsa - Telegram tekshiruvsiz qo'shamiz (faqat ko'rsatish uchun)
+                if "instagram.com" in channel_id.lower():
+                    if db.add_subscription_channel(channel_id, "Instagram", None):
+                        await update.message.reply_text(
+                            "✅ Instagram profil majburiy obuna ro'yxatiga qo'shildi.\n"
+                            "⚠️ Diqqat: obuna tekshiruvi faqat Telegram kanallari uchun ishlaydi.")
+                        context.user_data['awaiting_channel'] = False
+                    else:
+                        await update.message.reply_text("❌ Profilni qo'shishda xatolik yuz berdi!")
+                    return
                 
                 try:
                     chat = await context.bot.get_chat(channel_id)
