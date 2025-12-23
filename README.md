@@ -14,11 +14,13 @@ Telegram bot - kinolarni boshqarish va ulashish uchun.
 ## 🚀 O'rnatish
 
 1. Kutubxonalarni o'rnatish:
+
 ```bash
 pip install -r requirements.txt
 ```
 
 2. Botni ishga tushirish:
+
 ```bash
 python bot.py
 ```
@@ -27,39 +29,46 @@ python bot.py
 
 ### Muhit o'zgaruvchilari
 
-| O'zgaruvchi | Tavsif | Standart qiymat |
-|-------------|--------|-----------------|
-| `BOT_TOKEN` | Telegram bot tokeni | `config.py` dagi default |
-| `ADMIN_ID`  | Super admin ID | `config.py` dagi default |
-| `DATABASE_PATH` | SQLite faylining manzili | `database/movies.db` |
+| O'zgaruvchi     | Tavsif                    | Standart qiymat            |
+|-----------------|---------------------------|----------------------------|
+| `BOT_TOKEN`     | Telegram bot tokeni       | `config.py` dagi default   |
+| `ADMIN_ID`      | Super admin ID            | `config.py` dagi default   |
+| `DATABASE_PATH` | SQLite faylining manzili  | `database/movies.db`       |
 
 `.env` faylida yoki Railway/Render kabi hosting platformalarida ushbu qiymatlarni berib, kodni o'zgartirmasdan sozlamalarni boshqarishingiz mumkin.
 
 ### 1. Baza kanalini yaratish
+
 - Telegram'da yangi kanal yarating (masalan: Movie Storage)
 - Botni kanalga admin qilib qo'shing
 - Botga "Xabar yuborish" huquqini bering
 
 ### 2. Baza kanalini sozlash
+
 Botda `/setchannel` buyrug'ini yuboring:
-```
+
+```text
 /setchannel -1001234567890
 ```
+
 yoki
-```
+
+```text
 /setchannel @channelname
 ```
 
 Kanal ID ni topish uchun:
+
 - Botni kanalga admin qiling
 - Kanaldan biror xabarni @userinfobot ga forward qiling
 - Bot sizga kanal ID ni beradi
 
 ## 📱 Foydalanish
 
-### Admin uchun:
+### Admin uchun
 
 **Buyruqlar:**
+
 - `/start` - Botni ishga tushirish
 - `/admin` - Admin panel
 - `/setchannel` - Baza kanalini sozlash
@@ -68,19 +77,21 @@ Kanal ID ni topish uchun:
 - `/help` - Yordam
 
 **Kino qo'shish:**
+
 1. Kinoni botga yuboring (video, hujjat yoki audio)
 2. Bot kinoni baza kanalga yuklaydi
 3. Bot sizga noyob kodni beradi (masalan: ABC12345)
 
-### Foydalanuvchi uchun:
+### Foydalanuvchi uchun
 
 **Kinoni olish:**
+
 1. Botga kino kodini yuboring
 2. Bot kinoni topib yuboradi
 
 ## 📂 Loyiha strukturasi
 
-```
+```text
 prokinobot/
 ├── bot.py                 # Asosiy bot fayli
 ├── config.py              # Konfiguratsiya
@@ -105,6 +116,7 @@ prokinobot/
 ## 📝 Izoh
 
 Bot to'liq ishga tayyor. Faqat:
+
 1. Kutubxonalarni o'rnating
 2. Baza kanalini sozlang
 3. Kinolarni qo'shing va foydalaning!
@@ -116,27 +128,73 @@ Bot to'liq ishga tayyor. Faqat:
 - Super admin `/backupdb` buyrug'i orqali joriy database faylini botning o'zidan yuklab olishi mumkin.
 - Yangi serverga o'tganda `database/movies.db` faylini joylashtirgandan so'ng botni ishga tushiring — barcha ma'lumotlar tiklanadi.
 
-### ♻️ Railway (yoki boshqa PaaS) da ma'lumotni yo'qotmaslik
+### 🚀 Railway ga deploy qilish (TO'G'RI USUL)
 
-Railway konteyneri qayta ishga tushganida lokal fayllar yo'qoladi. SQLite bazasini saqlab qolish uchun quyidagi bosqichlarni bajaring:
+⚠️ **MUHIM**: Railway da oddiy deploy qilsangiz, har safar redeploy qilganda ma'lumotlar yo'qoladi! Buning oldini olish uchun quyidagi qadamlarni bajaring:
 
-1. Railway project ➝ **Volumes** bo'limidan `+ New Volume` bosing (masalan, `movies-data`).
-2. Ushbu volume'ni bot servisiga ulab, masalan `/app/data` papkasiga mount qiling.
-3. Railway dagi **Variables** bo'limiga `DATABASE_PATH=/app/data/movies.db` ni qo'shing.
-4. Deploy qayta ishga tushgach, barcha ma'lumotlar volume ichida saqlanadi va redeploy/paydo bo'ladigan restartlardan keyin ham saqlanib qoladi.
+#### 1-usul: Railway Volume (Tavsiya etiladi)
 
-Volume ulash imkoni bo'lmasa, tashqi Postgres/MySQL xizmatidan foydalaning yoki `/backupdb` orqali muntazam backup olib boring.
+1. Railway projectingizga kiring
+2. Bot servisingizni bosing
+3. **Settings** → **Volumes** bo'limiga o'ting
+4. **+ New Volume** bosing:
+   - Mount Path: `/app/data`
+   - Volume nomi: `movies-data`
+5. **Variables** bo'limiga quyidagilarni qo'shing:
+
+   ```bash
+   BOT_TOKEN=sizning_token
+   ADMIN_ID=sizning_admin_id
+   DATABASE_PATH=/app/data/movies.db
+   ```
+
+6. Deploy qiling
+
+Volume ulangandan keyin barcha ma'lumotlar saqlanib qoladi!
+
+#### 2-usul: PostgreSQL (Eng ishonchli)
+
+1. Railway projectingizda **+ New** → **Database** → **PostgreSQL** qo'shing
+2. PostgreSQL yaratilgandan keyin **Connect** tugmasini bosing
+3. `DATABASE_URL` avtomatik environment variablega qo'shiladi
+4. Bot avtomatik PostgreSQL ga ulanadi (kod tayyor)
+
+#### 3-usul: Muntazam backup
+
+Agar yuqoridagi usullar ishlamasa:
+
+1. Bot sozlamalarida **💾 Database backup** bosing
+2. Database faylini kompyuteringizga saqlang
+3. Har safar redeploy qilishdan oldin backup oling
+4. Kerak bo'lganda `/restoredb` orqali tiklang
+
+### 📋 Railway Environment Variables
+
+| O'zgaruvchi | Tavsif | Misol |
+| --- | --- | --- |
+| `BOT_TOKEN` | Telegram bot tokeni | `123456:ABC-DEF...` |
+| `ADMIN_ID` | Super admin Telegram ID | `5425876649` |
+| `DATABASE_PATH` | SQLite fayl joylashuvi | `/app/data/movies.db` |
+| `DATABASE_URL` | PostgreSQL URL (Railway beradi) | `postgresql://...` |
+
+### ⚠️ Ma'lumot yo'qolishining oldini olish
+
+1. **Har doim backup oling** - Bot sozlamalarida "Database backup" tugmasi bor
+2. **Volume ishlating** - Railway Volume ishlatish eng oson usul
+3. **PostgreSQL ishlating** - Katta loyihalar uchun eng yaxshi tanlov
+4. **Git ga database yuklamang** - `.gitignore` da `*.db` qo'shilgan
 
 ## 🆘 Muammolar
 
 Agar bot baza kanalga xabar yubora olmasa:
+
 1. Botni kanalga admin qilib qo'shganingizni tekshiring
 2. Botga "Xabar yuborish" huquqini berganingizni tekshiring
 3. Kanal ID to'g'ri kiritilganini tekshiring
 
 ## 📞 Aloqa
 
-Savol va takliflar uchun: @YourUsername
+Savol va takliflar uchun: @manager_komilov
 
 ---
 

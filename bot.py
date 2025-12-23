@@ -13,7 +13,7 @@ from telegram.ext import (
     ContextTypes
 )
 
-from config import BOT_TOKEN
+from config import BOT_TOKEN, ADMIN_ID
 from database import DatabaseManager
 from handlers import AdminHandlers, MovieHandlers, MovieAdminHandlers, PremiumHandlers
 
@@ -339,6 +339,44 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     broadcast_permission = db.user_has_permission(user_id, 'broadcast') if is_admin else False
     admin_permission = db.user_has_permission(user_id, 'admins') if is_admin else False
     premium_permission = db.user_has_permission(user_id, 'premium') if is_admin else False
+    
+    # Database restore qabul qilish
+    if context.user_data.get('awaiting_restore_db'):
+        if user_id != ADMIN_ID:
+            context.user_data['awaiting_restore_db'] = False
+            await update.message.reply_text("❌ Ushbu funksiya faqat super admin uchun!")
+            return
+        
+        if update.message.document:
+            doc = update.message.document
+            if not doc.file_name.endswith('.db'):
+                await update.message.reply_text("❌ Faqat .db formatidagi fayllar qabul qilinadi!")
+                return
+            
+            try:
+                # Faylni yuklab olish
+                db_path = db.get_db_path()
+                if db_path == "PostgreSQL (Railway)":
+                    await update.message.reply_text("❌ PostgreSQL ishlatilmoqda. SQLite restore qilish mumkin emas.")
+                    context.user_data['awaiting_restore_db'] = False
+                    return
+                
+                await update.message.reply_text("⏳ Database tiklanmoqda...")
+                
+                file = await context.bot.get_file(doc.file_id)
+                await file.download_to_drive(db_path)
+                
+                await update.message.reply_text(
+                    "✅ Database muvaffaqiyatli tiklandi!\n\n"
+                    "⚠️ Bot qayta ishga tushirilishi kerak.\n"
+                    "Yangi ma'lumotlar faqat bot qayta ishga tushgandan keyin ko'rinadi."
+                )
+                context.user_data['awaiting_restore_db'] = False
+            except Exception as e:
+                await update.message.reply_text(f"❌ Xatolik: {str(e)}")
+        else:
+            await update.message.reply_text("❌ Iltimos, .db faylini yuboring!")
+        return
     
     # Admin tugmalarni qayta ishlash
     if is_admin:
@@ -947,12 +985,121 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 return
         
+        # Havola qo'shish jarayonini tekshirish
+        if context.user_data.get('awaiting_link'):
+            if not channel_permission:
+                context.user_data['awaiting_link'] = False
+                await update.message.reply_text("❌ Majburiy obuna kanallarini boshqarish huquqi yo'q!")
+                return
+            
+            # Format: Tugma nomi | https://havola.uz
+            if message_text and '|' in message_text:
+                try:
+                    parts = message_text.split('|', 1)
+                    button_text = parts[0].strip()
+                    link_url = parts[1].strip()
+                    
+                    # URL tekshirish
+                    if not (link_url.startswith('http://') or link_url.startswith('https://')):
+                        await update.message.reply_text(
+                            "❌ Havola http:// yoki https:// bilan boshlanishi kerak!\n\n"
+                            "Misol: <code>Saytimiz | https://example.com</code>",
+                            parse_mode='HTML'
+                        )
+                        return
+                    
+                    # Havolani bazaga qo'shish (link turi)
+                    if db.add_subscription_channel(link_url, button_text, None, False, 'link'):
+                        await update.message.reply_text(
+                            f"✅ Havola muvaffaqiyatli qo'shildi!\n\n"
+                            f"🔗 Tugma: {button_text}\n"
+                            f"🌐 Havola: {link_url}",
+                            parse_mode='HTML'
+                        )
+                        context.user_data['awaiting_link'] = False
+                    else:
+                        await update.message.reply_text("❌ Havola qo'shishda xatolik yuz berdi!")
+                
+                except Exception as e:
+                    await update.message.reply_text(
+                        f"❌ Xatolik yuz berdi: {str(e)}\n\n"
+                        f"To'g'ri format:\n"
+                        f"<code>Tugma nomi | https://havola.uz</code>",
+                        parse_mode='HTML'
+                    )
+            else:
+                await update.message.reply_text(
+                    "❌ Noto'g'ri format!\n\n"
+                    "To'g'ri format:\n"
+                    "<code>Tugma nomi | https://havola.uz</code>\n\n"
+                    "Misol:\n"
+                    "<code>🌐 Saytimiz | https://example.com</code>",
+                    parse_mode='HTML'
+                )
+            return
+        
         # Kanal qo'shish jarayonini tekshirish
         if context.user_data.get('awaiting_channel'):
             if not channel_permission:
                 context.user_data['awaiting_channel'] = False
                 await update.message.reply_text("❌ Majburiy obuna kanallarini boshqarish huquqi yo'q!")
                 return
+            
+            is_required = context.user_data.get('channel_is_required', True)
+            channel_type = context.user_data.get('channel_type', 'channel')
+            
+            # So'rovli kanal uchun - faqat t.me/+ invite link qabul qilish
+            if channel_type == 'request':
+                if message_text:
+                    invite_link = message_text.strip()
+                    
+                    # t.me/+ yoki telegram.me/+ formatini tekshirish
+                    if 't.me/+' in invite_link or 't.me/joinchat/' in invite_link or 'telegram.me/+' in invite_link:
+                        # Invite havolasini to'g'ridan-to'g'ri saqlash
+                        # Kanal nomi sifatida havolaning oxirgi qismini olamiz
+                        link_parts = invite_link.split('/')
+                        link_code = link_parts[-1] if link_parts else invite_link
+                        
+                        if db.add_subscription_channel(invite_link, f"So'rovli kanal ({link_code[:10]}...)", None, is_required, 'request'):
+                            await update.message.reply_text(
+                                f"✅ So'rovli kanal muvaffaqiyatli qo'shildi!\n\n"
+                                f"🔐 Turi: So'rovli kanal\n"
+                                f"🔗 Havola: {invite_link}\n\n"
+                                f"ℹ️ Foydalanuvchilar ushbu havolaga borib qo'shilish so'rovi yuborishlari kerak.",
+                                parse_mode='HTML'
+                            )
+                            context.user_data['awaiting_channel'] = False
+                            context.user_data['channel_is_required'] = True
+                            context.user_data['channel_type'] = 'channel'
+                        else:
+                            await update.message.reply_text("❌ Bu havola allaqachon qo'shilgan yoki xatolik yuz berdi!")
+                        return
+                    else:
+                        await update.message.reply_text(
+                            "❌ So'rovli kanal uchun invite havola kerak!\n\n"
+                            "Invite havolani qanday olish:\n"
+                            "1. Kanalingizga kiring\n"
+                            "2. Kanal sozlamalarini oching\n"
+                            "3. 'Taklif havolalari' bo'limiga kiring\n"
+                            "4. '+' tugmasini bosing va 'So'rov kerak' ni yoqing\n"
+                            "5. Yaratilgan havolani nusxalab yuboring\n\n"
+                            "Havola formati: https://t.me/+XXXXXXXXX"
+                        )
+                        return
+                # Forward qilingan xabardan ham invite link olish
+                elif update.message.forward_from_chat:
+                    await update.message.reply_text(
+                        "❌ So'rovli kanal uchun forward emas, invite havola yuboring!\n\n"
+                        "Havola formati: https://t.me/+XXXXXXXXX"
+                    )
+                    return
+                else:
+                    await update.message.reply_text(
+                        "❌ So'rovli kanal uchun invite havola yuboring!\n\n"
+                        "Havola formati: https://t.me/+XXXXXXXXX"
+                    )
+                    return
+            
             # Forward qilingan xabar
             if update.message.forward_from_chat:
                 chat = update.message.forward_from_chat
@@ -972,14 +1119,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         return
                     
                     # Kanalni bazaga qo'shish
-                    if db.add_subscription_channel(channel_id, channel_name, channel_username):
+                    if db.add_subscription_channel(channel_id, channel_name, channel_username, is_required, channel_type):
+                        if channel_type == 'request':
+                            type_text = "🔐 So'rovli kanal"
+                        else:
+                            type_text = "🔒 Majburiy" if is_required else "🔓 Ixtiyoriy"
+                        
                         await update.message.reply_text(
                             f"✅ Kanal muvaffaqiyatli qo'shildi!\n\n"
                             f"📺 Kanal: {channel_name}\n"
-                            f"🆔 ID: <code>{channel_id}</code>",
+                            f"🆔 ID: <code>{channel_id}</code>\n"
+                            f"📋 Holati: {type_text}",
                             parse_mode='HTML'
                         )
                         context.user_data['awaiting_channel'] = False
+                        context.user_data['channel_is_required'] = True
+                        context.user_data['channel_type'] = 'channel'
                     else:
                         await update.message.reply_text("❌ Kanal allaqachon qo'shilgan yoki xatolik yuz berdi!")
                 
@@ -1011,14 +1166,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         return
                     
                     # Kanalni bazaga qo'shish
-                    if db.add_subscription_channel(str(chat.id), chat.title, chat.username):
+                    if db.add_subscription_channel(str(chat.id), chat.title, chat.username, is_required, channel_type):
+                        if channel_type == 'request':
+                            type_text = "🔐 So'rovli kanal"
+                        else:
+                            type_text = "🔒 Majburiy" if is_required else "🔓 Ixtiyoriy"
+                        
                         await update.message.reply_text(
                             f"✅ Kanal muvaffaqiyatli qo'shildi!\n\n"
                             f"📺 Kanal: {chat.title}\n"
-                            f"🆔 ID: <code>{chat.id}</code>",
+                            f"🆔 ID: <code>{chat.id}</code>\n"
+                            f"📋 Holati: {type_text}",
                             parse_mode='HTML'
                         )
                         context.user_data['awaiting_channel'] = False
+                        context.user_data['channel_is_required'] = True
+                        context.user_data['channel_type'] = 'channel'
                     else:
                         await update.message.reply_text("❌ Kanal allaqachon qo'shilgan yoki xatolik yuz berdi!")
                 
@@ -1031,6 +1194,44 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"2. Bot kanalda admin ekanligini"
                     )
                 return
+        
+        # Instagram profil qo'shish
+        if context.user_data.get('awaiting_instagram'):
+            if not channel_permission:
+                context.user_data['awaiting_instagram'] = False
+                await update.message.reply_text("❌ Kanal va profil boshqarish huquqi yo'q!")
+                return
+            
+            if message_text:
+                # Instagram linkdan username ajratib olish
+                username = message_text.strip()
+                
+                # Agar link yuborilgan bo'lsa, username ni ajratib olish
+                if 'instagram.com/' in username:
+                    # https://www.instagram.com/username/ yoki https://instagram.com/username formatidan username olish
+                    parts = username.split('instagram.com/')
+                    if len(parts) > 1:
+                        username = parts[1].split('?')[0].split('/')[0].strip()
+                
+                # @ belgisini olib tashlash
+                username = username.lstrip('@')
+                
+                if not username or len(username) < 2:
+                    await update.message.reply_text("❌ To'g'ri Instagram username yoki link kiriting!")
+                    return
+                
+                # Instagram profilni bazaga qo'shish
+                if db.add_instagram_profile(username):
+                    await update.message.reply_text(
+                        f"✅ Instagram profil muvaffaqiyatli qo'shildi!\n\n"
+                        f"📸 Username: @{username}\n"
+                        f"🔗 Link: https://instagram.com/{username}",
+                        parse_mode='HTML'
+                    )
+                    context.user_data['awaiting_instagram'] = False
+                else:
+                    await update.message.reply_text("❌ Bu profil allaqachon qo'shilgan yoki xatolik yuz berdi!")
+            return
         
         # Reply keyboard tugmalari
         if message_text == "📊 Statistika":
@@ -1470,11 +1671,13 @@ def main():
     application.add_handler(CommandHandler("setchannel", admin_handlers.set_channel))
     application.add_handler(CommandHandler("stats", admin_handlers.stats))
     application.add_handler(CommandHandler("backupdb", admin_handlers.backup_database))
+    application.add_handler(CommandHandler("restoredb", admin_handlers.restore_database))
     
     # Callback query handler
     application.add_handler(CallbackQueryHandler(handle_user_premium_callback, pattern="^userprem:"))
     application.add_handler(CallbackQueryHandler(handle_premium_request_callback, pattern="^premreq:"))
     application.add_handler(CallbackQueryHandler(admin_handlers.channel_callback, pattern="^channel_"))
+    application.add_handler(CallbackQueryHandler(admin_handlers.channel_callback, pattern="^instagram_"))
     application.add_handler(CallbackQueryHandler(admin_handlers.admin_callback, pattern="^admin_"))
     application.add_handler(CallbackQueryHandler(admin_handlers.bot_settings_callback, pattern="^botset_"))
     application.add_handler(CallbackQueryHandler(movie_admin_handlers.movie_callback, pattern="^movie_"))

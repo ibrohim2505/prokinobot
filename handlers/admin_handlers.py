@@ -273,6 +273,13 @@ class AdminHandlers:
             return
 
         db_path = self.db.get_db_path()
+        if db_path == "PostgreSQL (Railway)":
+            await update.message.reply_text(
+                "ℹ️ PostgreSQL ishlatilmoqda.\n\n"
+                "PostgreSQL backup olish uchun Railway dashboardidan foydalaning."
+            )
+            return
+            
         if not os.path.exists(db_path):
             await update.message.reply_text("❌ Database fayli topilmadi!")
             return
@@ -281,7 +288,9 @@ class AdminHandlers:
             filename = os.path.basename(db_path)
             caption = (
                 "📦 <b>Database nusxasi</b>\n\n"
-                "Serverni almashtirishdan oldin ushbu faylni saqlab qo'ying."
+                "Serverni almashtirishdan oldin ushbu faylni saqlab qo'ying.\n\n"
+                "Tiklash uchun: <code>/restoredb</code> buyrug'ini yuborib,\n"
+                "keyin ushbu faylni forward qiling."
             )
             with open(db_path, 'rb') as db_file:
                 await update.message.reply_document(
@@ -292,6 +301,32 @@ class AdminHandlers:
                 )
         except Exception as exc:
             await update.message.reply_text(f"❌ Nusxa olishda xatolik: {exc}")
+    
+    async def restore_database(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Super admin uchun database faylini tiklash komandasi"""
+        if not update.message:
+            return
+
+        user_id = update.effective_user.id if update.effective_user else None
+        if user_id != ADMIN_ID:
+            await update.message.reply_text("❌ Ushbu buyruq faqat super admin uchun mavjud!")
+            return
+
+        db_path = self.db.get_db_path()
+        if db_path == "PostgreSQL (Railway)":
+            await update.message.reply_text(
+                "ℹ️ PostgreSQL ishlatilmoqda.\n\n"
+                "PostgreSQL restore qilish uchun Railway dashboardidan foydalaning."
+            )
+            return
+        
+        context.user_data['awaiting_restore_db'] = True
+        await update.message.reply_text(
+            "📥 <b>Database tiklash</b>\n\n"
+            "Database faylini (.db) yuboring yoki forward qiling.\n\n"
+            "⚠️ <b>Diqqat:</b> Joriy barcha ma'lumotlar o'chiriladi!",
+            parse_mode='HTML'
+        )
     
     async def channel_management(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Kanal boshqaruvi"""
@@ -411,14 +446,37 @@ class AdminHandlers:
         
         elif data == "channel_list":
             channels = self.db.get_subscription_channels()
+            instagram_profiles = self.db.get_instagram_profiles()
             
-            if len(channels) == 0:
-                text = "📋 <b>Kanallar ro'yxati</b>\n\n❌ Hech qanday kanal sozlanmagan"
+            if len(channels) == 0 and len(instagram_profiles) == 0:
+                text = "📋 <b>Kanallar va profillar ro'yxati</b>\n\n❌ Hech qanday kanal yoki profil sozlanmagan"
             else:
-                text = "📋 <b>Kanallar ro'yxati</b>\n\n"
-                for i, (channel_id, channel_name, channel_username) in enumerate(channels, 1):
-                    name = channel_name or channel_username or channel_id
-                    text += f"{i}. {name}\n   ID: <code>{channel_id}</code>\n\n"
+                text = "📋 <b>Kanallar va profillar ro'yxati</b>\n\n"
+                
+                if channels:
+                    text += "<b>📺 Telegram kanallar:</b>\n"
+                    for i, channel_data in enumerate(channels, 1):
+                        # channel_id, channel_name, channel_username, is_required, channel_type
+                        channel_id, channel_name, channel_username, is_required = channel_data[:4]
+                        channel_type = channel_data[4] if len(channel_data) > 4 else 'channel'
+                        
+                        name = channel_name or channel_username or channel_id
+                        
+                        if channel_type == 'link':
+                            text += f"{i}. 🔗 {name}\n   Havola: {channel_id}\n\n"
+                        elif channel_type == 'request':
+                            text += f"{i}. 🔐 {name}\n   ID: <code>{channel_id}</code>\n   So'rovli kanal\n\n"
+                        else:
+                            status = "🔒 Majburiy" if is_required else "🔓 Ixtiyoriy"
+                            text += f"{i}. {name}\n   ID: <code>{channel_id}</code>\n   {status}\n\n"
+                
+                if instagram_profiles:
+                    text += "<b>📸 Instagram profillar:</b>\n"
+                    for i, profile in enumerate(instagram_profiles, 1):
+                        profile_id, username, profile_name, is_required = profile[:4] if len(profile) >= 4 else (*profile, 1)
+                        name = profile_name or f"@{username}"
+                        status = "🔒 Majburiy" if is_required else "🔓 Ixtiyoriy"
+                        text += f"{i}. {name}\n   Username: @{username}\n   {status}\n\n"
             
             keyboard = [[InlineKeyboardButton("🔙 Orqaga", callback_data="channel_back")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -427,10 +485,30 @@ class AdminHandlers:
             await query.answer()
         
         elif data == "channel_add":
-            # Kanal qo'shish holatini saqlash
-            context.user_data['awaiting_channel'] = True
+            # Kanal qo'shish turi tanlash
+            text = "📡 <b>Nima qo'shmoqchisiz?</b>\n\n"
+            text += "Qo'shmoqchi bo'lgan turni tanlang:"
             
-            text = "📡 <b>Yangi kanal qo'shish</b>\n\n"
+            keyboard = [
+                [InlineKeyboardButton("📺 Telegram kanal", callback_data="channel_add_required")],
+                [InlineKeyboardButton("🔐 So'rovli kanal", callback_data="channel_add_request")],
+                [InlineKeyboardButton("🔗 Havola qo'shish", callback_data="link_add")],
+                [InlineKeyboardButton("📸 Instagram profil", callback_data="instagram_add")],
+                [InlineKeyboardButton("🔙 Orqaga", callback_data="channel_back")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.answer()
+            await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
+        
+        elif data == "channel_add_required":
+            # Telegram kanal qo'shish
+            context.user_data['awaiting_channel'] = True
+            context.user_data['channel_is_required'] = True
+            context.user_data['channel_type'] = 'channel'
+            
+            text = "📡 <b>Telegram kanal qo'shish</b>\n\n"
+            text += "⚠️ Foydalanuvchilar ushbu kanalga obuna bo'lmasa botdan foydalana olmaydi.\n\n"
             text += "Kanal havolasini yuboring yoki kanal postini forward qiling.\n\n"
             text += "Misol: @channelname yoki -1001234567890"
             
@@ -440,19 +518,93 @@ class AdminHandlers:
             await query.answer("Kanal havolasini yoki postini yuboring", show_alert=False)
             await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
         
+        elif data == "channel_add_request":
+            # So'rovli kanal qo'shish
+            context.user_data['awaiting_channel'] = True
+            context.user_data['channel_is_required'] = True
+            context.user_data['channel_type'] = 'request'
+            
+            text = "🔐 <b>So'rovli kanal qo'shish</b>\n\n"
+            text += "📋 So'rovli kanal nima?\n"
+            text += "Foydalanuvchi kanalga qo'shilish so'rovini yuboradi va admin/bot tasdiqlaydi.\n\n"
+            text += "⚠️ Kanalda 'Qo'shilish so'rovlari' yoqilgan bo'lishi kerak!\n\n"
+            text += "Kanal havolasini yuboring yoki kanal postini forward qiling.\n\n"
+            text += "Misol: @channelname yoki -1001234567890"
+            
+            keyboard = [[InlineKeyboardButton("❌ Bekor qilish", callback_data="channel_cancel")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.answer("So'rovli kanal havolasini yuboring", show_alert=False)
+            await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
+        
+        elif data == "link_add":
+            # Havola qo'shish
+            context.user_data['awaiting_link'] = True
+            context.user_data['channel_is_required'] = False
+            
+            text = "🔗 <b>Havola qo'shish</b>\n\n"
+            text += "📝 Bu oddiy link bo'lib, tugma sifatida ko'rinadi.\n"
+            text += "Misol: sayt, YouTube kanal, boshqa bot va h.k.\n\n"
+            text += "Havolani quyidagi formatda yuboring:\n\n"
+            text += "<code>Tugma nomi | https://havola.uz</code>\n\n"
+            text += "Misol:\n"
+            text += "<code>🌐 Saytimiz | https://example.com</code>\n"
+            text += "<code>📺 YouTube | https://youtube.com/@channel</code>"
+            
+            keyboard = [[InlineKeyboardButton("❌ Bekor qilish", callback_data="channel_cancel")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.answer("Havola formatida yuboring", show_alert=False)
+            await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
+        
+        elif data == "instagram_add":
+            # Instagram profil qo'shish
+            context.user_data['awaiting_instagram'] = True
+            
+            text = "📸 <b>Instagram profil qo'shish</b>\n\n"
+            text += "Instagram username yoki link yuboring.\n\n"
+            text += "Misol:\n"
+            text += "• @username\n"
+            text += "• username\n"
+            text += "• https://instagram.com/username\n"
+            text += "• https://www.instagram.com/username"
+            
+            keyboard = [[InlineKeyboardButton("❌ Bekor qilish", callback_data="channel_cancel")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.answer("Instagram username yoki link yuboring", show_alert=False)
+            await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
+        
         elif data == "channel_delete":
             channels = self.db.get_subscription_channels()
+            instagram_profiles = self.db.get_instagram_profiles()
             
-            if len(channels) == 0:
-                await query.answer("O'chirish uchun kanallar yo'q", show_alert=True)
+            if len(channels) == 0 and len(instagram_profiles) == 0:
+                await query.answer("O'chirish uchun kanallar yoki profillar yo'q", show_alert=True)
             else:
-                text = "🗑 <b>Kanal o'chirish</b>\n\n"
-                text += "O'chirish uchun kanalni tanlang:"
+                text = "🗑 <b>O'chirish</b>\n\n"
+                text += "O'chirish uchun kanal yoki profilni tanlang:"
                 
                 keyboard = []
-                for channel_id, channel_name, channel_username in channels:
+                
+                # Telegram kanallar
+                for channel_data in channels:
+                    channel_id, channel_name, channel_username, is_required, channel_type = channel_data[:5]
                     name = channel_name or channel_username or channel_id
-                    keyboard.append([InlineKeyboardButton(f"🗑 {name}", callback_data=f"channel_delete_{channel_id}")])
+                    # Channel type bo'yicha emoji
+                    if channel_type == 'request':
+                        emoji = "🔐"
+                    elif channel_type == 'link':
+                        emoji = "🔗"
+                    else:
+                        emoji = "📺"
+                    keyboard.append([InlineKeyboardButton(f"{emoji} {name}", callback_data=f"channel_delete_{channel_id}")])
+                
+                # Instagram profillar
+                for profile in instagram_profiles:
+                    profile_id, username, profile_name = profile[:3]
+                    name = profile_name or f"@{username}"
+                    keyboard.append([InlineKeyboardButton(f"📸 {name}", callback_data=f"instagram_delete_{profile_id}")])
                 
                 keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data="channel_back")])
                 reply_markup = InlineKeyboardMarkup(keyboard)
@@ -469,18 +621,31 @@ class AdminHandlers:
                 
                 # Kanal o'chirish sahifasiga qaytish
                 channels = self.db.get_subscription_channels()
+                instagram_profiles = self.db.get_instagram_profiles()
                 
-                if len(channels) == 0:
-                    # Agar kanallar qolmasa, bosh menyuga qaytish
+                if len(channels) == 0 and len(instagram_profiles) == 0:
+                    # Agar kanallar va profillar qolmasa, bosh menyuga qaytish
                     await self.show_channel_management_menu(query)
                 else:
-                    text = "🗑 <b>Kanal o'chirish</b>\n\n"
-                    text += "O'chirish uchun kanalni tanlang:"
+                    text = "🗑 <b>O'chirish</b>\n\n"
+                    text += "O'chirish uchun kanal yoki profilni tanlang:"
                     
                     keyboard = []
-                    for ch_id, ch_name, ch_username in channels:
+                    for channel_data in channels:
+                        ch_id, ch_name, ch_username, is_req, ch_type = channel_data[:5]
                         name = ch_name or ch_username or ch_id
-                        keyboard.append([InlineKeyboardButton(f"🗑 {name}", callback_data=f"channel_delete_{ch_id}")])
+                        if ch_type == 'request':
+                            emoji = "🔐"
+                        elif ch_type == 'link':
+                            emoji = "🔗"
+                        else:
+                            emoji = "📺"
+                        keyboard.append([InlineKeyboardButton(f"{emoji} {name}", callback_data=f"channel_delete_{ch_id}")])
+                    
+                    for profile in instagram_profiles:
+                        p_id, username, p_name = profile[:3]
+                        name = p_name or f"@{username}"
+                        keyboard.append([InlineKeyboardButton(f"📸 {name}", callback_data=f"instagram_delete_{p_id}")])
                     
                     keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data="channel_back")])
                     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -488,6 +653,47 @@ class AdminHandlers:
                     await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
             else:
                 await query.answer("❌ Kanalni o'chirishda xatolik!", show_alert=True)
+        
+        elif data.startswith("instagram_delete_"):
+            # Instagram profilni o'chirish
+            profile_id = int(data.replace("instagram_delete_", ""))
+            
+            if self.db.delete_instagram_profile(profile_id):
+                await query.answer("Instagram profil muvaffaqiyatli o'chirildi ✅", show_alert=True)
+                
+                # O'chirish sahifasiga qaytish
+                channels = self.db.get_subscription_channels()
+                instagram_profiles = self.db.get_instagram_profiles()
+                
+                if len(channels) == 0 and len(instagram_profiles) == 0:
+                    await self.show_channel_management_menu(query)
+                else:
+                    text = "🗑 <b>O'chirish</b>\n\n"
+                    text += "O'chirish uchun kanal yoki profilni tanlang:"
+                    
+                    keyboard = []
+                    for channel_data in channels:
+                        ch_id, ch_name, ch_username, is_req, ch_type = channel_data[:5]
+                        name = ch_name or ch_username or ch_id
+                        if ch_type == 'request':
+                            emoji = "🔐"
+                        elif ch_type == 'link':
+                            emoji = "🔗"
+                        else:
+                            emoji = "📺"
+                        keyboard.append([InlineKeyboardButton(f"{emoji} {name}", callback_data=f"channel_delete_{ch_id}")])
+                    
+                    for profile in instagram_profiles:
+                        p_id, username, p_name = profile[:3]
+                        name = p_name or f"@{username}"
+                        keyboard.append([InlineKeyboardButton(f"📸 {name}", callback_data=f"instagram_delete_{p_id}")])
+                    
+                    keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data="channel_back")])
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    await query.edit_message_text(text, parse_mode='HTML', reply_markup=reply_markup)
+            else:
+                await query.answer("❌ Instagram profilni o'chirishda xatolik!", show_alert=True)
         
         elif data == "channel_edit_message":
             # Obuna xabarini tahrirlash
@@ -531,6 +737,8 @@ class AdminHandlers:
             context.user_data['awaiting_channel'] = False
             context.user_data['awaiting_sub_message'] = False
             context.user_data['awaiting_base_channel'] = False
+            context.user_data['awaiting_instagram'] = False
+            context.user_data['channel_is_required'] = True
             
             await query.answer("Bekor qilindi", show_alert=True)
             await self.show_channel_management_menu(query)

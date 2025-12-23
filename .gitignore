@@ -9,6 +9,10 @@ __pycache__/
 venv/
 env/
 ENV/
+.venv/
+
+# Environment variables
+.env
 
 # Database
 *.db

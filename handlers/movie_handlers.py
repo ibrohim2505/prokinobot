@@ -20,17 +20,49 @@ class MovieHandlers:
         return self.db.user_has_permission(user_id, 'movies')
 
     async def _get_unsubscribed_channels(self, bot, user_id: int):
+        """Obuna bo'lmagan kanallar ro'yxatini qaytarish
+        
+        Returns:
+            tuple: (unsubscribed_channels, request_channels, link_channels)
+            - unsubscribed_channels: Tekshiriladigan va obuna bo'lmagan kanallar
+            - request_channels: So'rovli kanallar (har doim ko'rsatiladi)
+            - link_channels: Havolalar (har doim ko'rsatiladi)
+        """
         if self.db.is_admin_user(user_id):
-            return []
+            return [], [], []
         if not self.db.get_subscription_status():
-            return []
+            return [], [], []
         channels = self.db.get_subscription_channels()
         if not channels:
-            return []
+            return [], [], []
 
         unsubscribed = []
-        for channel_id, channel_name, channel_username in channels:
+        request_channels = []
+        link_channels = []
+        
+        for channel_id, channel_name, channel_username, is_required, channel_type in channels:
+            # Faqat majburiy kanallarni tekshirish
+            if not is_required:
+                continue
+            
+            # Havola turini ajratish
+            if channel_type == 'link':
+                link_channels.append((channel_id, channel_name, channel_username))
+                continue
+            
+            # So'rovli kanallarni ajratish - ularni tekshirib bo'lmaydi, shuning uchun har doim ko'rsatamiz
+            if channel_type == 'request':
+                request_channels.append((channel_id, channel_name, channel_username))
+                continue
+                
+            # Oddiy kanallarni tekshirish
             chat_id = channel_id
+            
+            # Invite havola bo'lsa, tekshirib bo'lmaydi
+            if isinstance(channel_id, str) and ('t.me/+' in channel_id or 'joinchat' in channel_id):
+                request_channels.append((channel_id, channel_name, channel_username))
+                continue
+            
             if isinstance(chat_id, str) and chat_id.lstrip('-').isdigit():
                 try:
                     chat_id = int(chat_id)
@@ -43,22 +75,70 @@ class MovieHandlers:
                 if status in ('left', 'kicked') or (status == 'restricted' and not is_member):
                     unsubscribed.append((channel_id, channel_name, channel_username))
             except Exception:
+                # Tekshirib bo'lmasa, obuna bo'lmagan deb hisoblaymiz
                 unsubscribed.append((channel_id, channel_name, channel_username))
-        return unsubscribed
+        
+        return unsubscribed, request_channels, link_channels
 
     async def _ensure_subscription(self, update: Update, context: ContextTypes.DEFAULT_TYPE, code: str) -> bool:
         """Majburiy obuna talablarini tekshirish"""
-        unsubscribed = await self._get_unsubscribed_channels(context.bot, update.effective_user.id)
-        if not unsubscribed:
+        unsubscribed, request_channels, link_channels = await self._get_unsubscribed_channels(context.bot, update.effective_user.id)
+        
+        # Agar hech qanday majburiy kanal yo'q bo'lsa, ruxsat beramiz
+        if not unsubscribed and not request_channels and not link_channels:
+            return True
+        
+        # Agar faqat so'rovli yoki havolalar bo'lsa, bir marta ko'rsatamiz va ruxsat beramiz
+        if not unsubscribed and (request_channels or link_channels):
+            # Avval ko'rsatilganmi tekshirish
+            shown_key = f"shown_channels_{update.effective_user.id}"
+            if context.user_data.get(shown_key):
+                return True
+            
+            # Kanallarni ko'rsatish
+            text_lines = [self.db.get_subscription_message().strip()]
+            buttons = []
+            
+            # So'rovli kanallar
+            for channel_id, channel_name, _ in request_channels:
+                name = channel_name or "So'rovli kanal"
+                buttons.append([InlineKeyboardButton(f"🔐 {name}", url=channel_id)])
+            
+            # Havolalar
+            for link_url, button_text, _ in link_channels:
+                name = button_text or "Havola"
+                buttons.append([InlineKeyboardButton(f"🔗 {name}", url=link_url)])
+            
+            if buttons:
+                buttons.append([InlineKeyboardButton("✅ Davom etish", callback_data=f"verify_sub:{code}")])
+                reply_markup = InlineKeyboardMarkup(buttons)
+                await update.message.reply_text('\n'.join(text_lines), parse_mode='HTML', reply_markup=reply_markup)
+                context.user_data[shown_key] = True
+                context.user_data['pending_movie_code'] = code
+            
             return True
 
+        # Obuna bo'lmagan kanallar bor - bloklaymiz
         text_lines = [self.db.get_subscription_message().strip()]
-
         buttons = []
-        for _, channel_name, channel_username in unsubscribed:
+        
+        # Tekshiriladigan kanallar
+        for channel_id, channel_name, channel_username in unsubscribed:
             if channel_username:
                 username = channel_username.lstrip('@')
-                buttons.append([InlineKeyboardButton("➕ Kanalga obuna bo'lish", url=f"https://t.me/{username}")])
+                buttons.append([InlineKeyboardButton(f"➕ {channel_name or 'Kanal'}", url=f"https://t.me/{username}")])
+            elif isinstance(channel_id, str) and ('t.me/' in channel_id):
+                buttons.append([InlineKeyboardButton(f"➕ {channel_name or 'Kanal'}", url=channel_id)])
+        
+        # So'rovli kanallar
+        for channel_id, channel_name, _ in request_channels:
+            name = channel_name or "So'rovli kanal"
+            buttons.append([InlineKeyboardButton(f"🔐 {name}", url=channel_id)])
+        
+        # Havolalar
+        for link_url, button_text, _ in link_channels:
+            name = button_text or "Havola"
+            buttons.append([InlineKeyboardButton(f"🔗 {name}", url=link_url)])
 
         verify_data = f"verify_sub:{code}"
         buttons.append([InlineKeyboardButton("✅ Obunani tekshirish", callback_data=verify_data)])
@@ -178,6 +258,17 @@ class MovieHandlers:
         message = update.message
         code = message.text.strip()
         
+        # Agar admin biror narsa kutayotgan bo'lsa, kino kodi xatosini ko'rsatmaslik
+        if context.user_data.get('awaiting_channel') or \
+           context.user_data.get('awaiting_instagram') or \
+           context.user_data.get('awaiting_link') or \
+           context.user_data.get('awaiting_admin_add') or \
+           context.user_data.get('awaiting_broadcast') or \
+           context.user_data.get('awaiting_start_message') or \
+           context.user_data.get('awaiting_subscription_message') or \
+           context.user_data.get('adding_movie'):
+            return  # Boshqa handlerga o'tkazish
+        
         # Kodning formatini tekshirish (faqat raqam va 1-10000 oralig'i)
         if not code.isdigit():
             await update.message.reply_text(
@@ -208,8 +299,37 @@ class MovieHandlers:
         data = query.data or ""
         code = data.split(':', 1)[1] if ':' in data else context.user_data.get('pending_movie_code')
 
-        unsubscribed = await self._get_unsubscribed_channels(context.bot, user_id)
+        unsubscribed, request_channels, link_channels = await self._get_unsubscribed_channels(context.bot, user_id)
+        
+        # Agar tekshiriladigan kanallarga obuna bo'lmagan bo'lsa
         if unsubscribed:
+            # Kanallarni qayta ko'rsatish
+            text_lines = [self.db.get_subscription_message().strip()]
+            buttons = []
+            
+            for channel_id, channel_name, channel_username in unsubscribed:
+                if channel_username:
+                    username = channel_username.lstrip('@')
+                    buttons.append([InlineKeyboardButton(f"➕ {channel_name or 'Kanal'}", url=f"https://t.me/{username}")])
+                elif isinstance(channel_id, str) and ('t.me/' in channel_id):
+                    buttons.append([InlineKeyboardButton(f"➕ {channel_name or 'Kanal'}", url=channel_id)])
+            
+            for channel_id, channel_name, _ in request_channels:
+                name = channel_name or "So'rovli kanal"
+                buttons.append([InlineKeyboardButton(f"🔐 {name}", url=channel_id)])
+            
+            for link_url, button_text, _ in link_channels:
+                name = button_text or "Havola"
+                buttons.append([InlineKeyboardButton(f"🔗 {name}", url=link_url)])
+            
+            verify_data = f"verify_sub:{code}" if code else "verify_sub"
+            buttons.append([InlineKeyboardButton("✅ Obunani tekshirish", callback_data=verify_data)])
+            
+            reply_markup = InlineKeyboardMarkup(buttons)
+            try:
+                await query.message.edit_text('\n'.join(text_lines), parse_mode='HTML', reply_markup=reply_markup)
+            except Exception:
+                pass
             await query.answer("⚠️ Kanallarga obuna bo'lmadingiz", show_alert=True)
             return
 
@@ -221,6 +341,9 @@ class MovieHandlers:
         if delivered:
             await query.answer("✅ Obuna tasdiqlandi", show_alert=False)
             context.user_data.pop('pending_movie_code', None)
+            # Ko'rsatilgan kanallar belgisini tozalash
+            shown_key = f"shown_channels_{user_id}"
+            context.user_data.pop(shown_key, None)
             try:
                 await query.message.delete()
             except Exception:
